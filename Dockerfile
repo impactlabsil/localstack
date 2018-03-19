@@ -50,7 +50,7 @@ ENV MAVEN_CONFIG=/opt/code/localstack \
     USER=localstack
 
 # expose service & web dashboard ports
-EXPOSE 4567-4583 8080
+EXPOSE 4567-4583 9080
 
 # install supervisor daemon & copy config file
 ADD bin/supervisord.conf /etc/supervisord.conf
