@@ -417,7 +417,7 @@ def start_infra_in_docker():
     plugin_run_params = '%s ' % plugin_run_params if plugin_run_params else plugin_run_params
 
     docker_cmd = ('docker run %s%s%s%s' +
-        '-p 8080:8080 %s %s' +
+        '-p 9080:9080 %s %s' +
         '-v "%s:/tmp/localstack" -v "%s:%s" ' +
         '-e DOCKER_HOST="unix://%s" ' +
         '-e HOST_TMP_FOLDER="%s" "%s" %s') % (
