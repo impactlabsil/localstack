@@ -1,24 +1,6 @@
 package cloud.localstack;
 
-import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.OutputStream;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Type;
-import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
-import java.util.Base64;
-import java.util.Date;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-
-import org.apache.commons.io.FileUtils;
-import org.apache.commons.lang3.StringUtils;
-import org.joda.time.DateTime;
-
+import cloud.localstack.lambda.DDBEventParser;
 import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.RequestHandler;
 import com.amazonaws.services.lambda.runtime.RequestStreamHandler;
@@ -29,15 +11,27 @@ import com.amazonaws.services.lambda.runtime.events.SNSEvent;
 import com.amazonaws.util.StringInputStream;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-
-import cloud.localstack.lambda.DDBEventParser;
+import org.apache.commons.lang3.StringUtils;
+import org.joda.time.DateTime;
 import sun.reflect.generics.reflectiveObjects.ParameterizedTypeImpl;
+
+import java.io.ByteArrayOutputStream;
+import java.io.OutputStream;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Type;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * Simple implementation of a Java Lambda function executor.
  *
  * @author Waldemar Hummer
  */
+@SuppressWarnings("restriction")
 public class LambdaExecutor {
 
 	@SuppressWarnings("unchecked")
@@ -62,7 +56,7 @@ public class LambdaExecutor {
 				inputObject = deserialisedInput.get();
 			}
 		} else {
-			if (records.stream().filter(record -> record.containsKey("Kinesis")).count() > 0) {
+			if (records.stream().anyMatch(record -> record.containsKey("Kinesis"))) {
 				KinesisEvent kinesisEvent = new KinesisEvent();
 				inputObject = kinesisEvent;
 				kinesisEvent.setRecords(new LinkedList<>());
@@ -78,7 +72,7 @@ public class LambdaExecutor {
 					kinesisRecord.setApproximateArrivalTimestamp(new Date());
 					r.setKinesis(kinesisRecord);
 				}
-			} else if (records.stream().filter(record -> record.containsKey("Sns")).count() > 0) {
+			} else if (records.stream().anyMatch(record -> record.containsKey("Sns"))) {
 				SNSEvent snsEvent = new SNSEvent();
 				inputObject = snsEvent;
 				snsEvent.setRecords(new LinkedList<>());
@@ -128,7 +122,7 @@ public class LambdaExecutor {
 						((ParameterizedTypeImpl) genericInterface).getRawType().equals(RequestHandler.class))
 					.findFirst();
 			if (handlerInterface.isPresent()) {
-				Class handlerInputType = Class.forName(((ParameterizedTypeImpl) handlerInterface.get())
+				Class<?> handlerInputType = Class.forName(((ParameterizedTypeImpl) handlerInterface.get())
 						.getActualTypeArguments()[0].getTypeName());
 				inputObject = Optional.of(mapper.readerFor(handlerInputType).readValue(objectString));
 			}
@@ -161,7 +155,7 @@ public class LambdaExecutor {
 		if(!file.startsWith("/")) {
 			file = System.getProperty("user.dir") + "/" + file;
 		}
-		return FileUtils.readFileToString(new File(file), StandardCharsets.UTF_8);
+		return Files.lines(Paths.get(file), StandardCharsets.UTF_8).collect(Collectors.joining());
 	}
 
 }
