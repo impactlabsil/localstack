@@ -22,7 +22,7 @@ class ProxyListenerSNS(ProxyListener):
     def forward_request(self, method, path, data, headers):
 
         if method == 'POST' and path == '/':
-            req_data = urlparse.parse_qs(to_str(data))
+            req_data = urlparse.parse_qs(data)
             req_action = req_data['Action'][0]
             topic_arn = req_data.get('TargetArn') or req_data.get('TopicArn')
 
