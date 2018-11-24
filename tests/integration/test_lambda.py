@@ -7,26 +7,29 @@ from localstack.utils import testutil
 from localstack.utils.aws import aws_stack
 from localstack.utils.common import short_uid, load_file, to_str, mkdir, download
 from localstack.services.awslambda import lambda_api, lambda_executors
-from localstack.services.awslambda.lambda_api import (LAMBDA_RUNTIME_NODEJS,
+from localstack.services.awslambda.lambda_api import (LAMBDA_RUNTIME_NODEJS, LAMBDA_RUNTIME_DOTNETCORE2,
     LAMBDA_RUNTIME_PYTHON27, LAMBDA_RUNTIME_PYTHON36, LAMBDA_RUNTIME_JAVA8, use_docker)
 
 THIS_FOLDER = os.path.dirname(os.path.realpath(__file__))
 TEST_LAMBDA_PYTHON = os.path.join(THIS_FOLDER, 'lambdas', 'lambda_integration.py')
 TEST_LAMBDA_PYTHON3 = os.path.join(THIS_FOLDER, 'lambdas', 'lambda_python3.py')
 TEST_LAMBDA_NODEJS = os.path.join(THIS_FOLDER, 'lambdas', 'lambda_integration.js')
+TEST_LAMBDA_DOTNETCORE2 = os.path.join(THIS_FOLDER, 'lambdas', 'dotnetcore2', 'dotnetcore2.zip')
 TEST_LAMBDA_JAVA = os.path.join(LOCALSTACK_ROOT_FOLDER, 'localstack', 'infra', 'localstack-utils-tests.jar')
 TEST_LAMBDA_ENV = os.path.join(THIS_FOLDER, 'lambdas', 'lambda_environment.py')
 
 TEST_LAMBDA_NAME_PY = 'test_lambda_py'
 TEST_LAMBDA_NAME_PY3 = 'test_lambda_py3'
 TEST_LAMBDA_NAME_JS = 'test_lambda_js'
+TEST_LAMBDA_NAME_DOTNETCORE2 = 'test_lambda_dotnetcore2'
 TEST_LAMBDA_NAME_JAVA = 'test_lambda_java'
 TEST_LAMBDA_NAME_JAVA_STREAM = 'test_lambda_java_stream'
 TEST_LAMBDA_NAME_JAVA_SERIALIZABLE = 'test_lambda_java_serializable'
 TEST_LAMBDA_NAME_ENV = 'test_lambda_env'
 
-TEST_LAMBDA_JAR_URL = ('https://repo.maven.apache.org/maven2/cloud/localstack/' +
-    'localstack-utils/{version}/localstack-utils-{version}-tests.jar').format(version=LOCALSTACK_MAVEN_VERSION)
+MAVEN_BASE_URL = 'https://repo.maven.apache.org/maven2'
+TEST_LAMBDA_JAR_URL = ('{url}/cloud/localstack/{name}/{version}/{name}-{version}-tests.jar').format(
+    version=LOCALSTACK_MAVEN_VERSION, url=MAVEN_BASE_URL, name='localstack-utils')
 
 TEST_LAMBDA_LIBS = ['localstack', 'localstack_client', 'requests', 'psutil', 'urllib3', 'chardet', 'certifi', 'idna']
 
@@ -59,8 +62,52 @@ def test_upload_lambda_from_s3():
     # invoke lambda function
     data_before = b'{"foo": "bar"}'
     result = lambda_client.invoke(FunctionName=lambda_name, Payload=data_before)
-    data_after = result['Payload'].read()
-    assert json.loads(to_str(data_before)) == json.loads(to_str(data_after))
+    data_after = json.loads(result['Payload'].read())
+    assert json.loads(to_str(data_before)) == data_after['event']
+
+    context = data_after['context']
+    assert '$LATEST' == context['function_version']
+    assert lambda_name == context['function_name']
+
+
+def test_function_invocation_with_qualifier():
+
+    s3_client = aws_stack.connect_to_service('s3')
+    lambda_client = aws_stack.connect_to_service('lambda')
+
+    lambda_name = 'test_lambda_%s' % short_uid()
+    bucket_name = 'test_bucket_lambda2'
+    bucket_key = 'test_lambda.zip'
+
+    # upload zip file to S3
+    zip_file = testutil.create_lambda_archive(load_file(TEST_LAMBDA_PYTHON), get_content=True,
+        libs=TEST_LAMBDA_LIBS, runtime=LAMBDA_RUNTIME_PYTHON27)
+    s3_client.create_bucket(Bucket=bucket_name)
+    s3_client.upload_fileobj(BytesIO(zip_file), bucket_name, bucket_key)
+
+    # create lambda function
+    response = lambda_client.create_function(
+        FunctionName=lambda_name, Handler='handler.handler',
+        Runtime=lambda_api.LAMBDA_RUNTIME_PYTHON27, Role='r1',
+        Code={
+            'S3Bucket': bucket_name,
+            'S3Key': bucket_key
+        },
+        Publish=True
+    )
+
+    assert 'Version' in response
+
+    # invoke lambda function
+    data_before = b'{"foo": "bar"}'
+    result = lambda_client.invoke(FunctionName=lambda_name, Payload=data_before,
+                                  Qualifier=response['Version'])
+    data_after = json.loads(result['Payload'].read())
+    assert json.loads(to_str(data_before)) == data_after['event']
+
+    context = data_after['context']
+    assert response['Version'] == context['function_version']
+    assert lambda_name == context['function_name']
 
 
 def test_lambda_runtimes():
@@ -72,10 +119,27 @@ def test_lambda_runtimes():
         libs=TEST_LAMBDA_LIBS, runtime=LAMBDA_RUNTIME_PYTHON27)
     testutil.create_lambda_function(func_name=TEST_LAMBDA_NAME_PY,
         zip_file=zip_file, runtime=LAMBDA_RUNTIME_PYTHON27)
+
+    # Invocation Type not set
     result = lambda_client.invoke(FunctionName=TEST_LAMBDA_NAME_PY, Payload=b'{}')
     assert result['StatusCode'] == 200
+    result_data = json.loads(result['Payload'].read())
+    assert result_data['event'] == json.loads('{}')
+
+    # Invocation Type - RequestResponse
+    result = lambda_client.invoke(FunctionName=TEST_LAMBDA_NAME_PY, Payload=b'{}', InvocationType='RequestResponse')
+    assert result['StatusCode'] == 200
     result_data = result['Payload'].read()
-    assert to_str(result_data).strip() == '{}'
+    result_data = json.loads(to_str(result_data))
+    assert isinstance(result_data, dict)
+
+    # Invocation Type - Event
+    result = lambda_client.invoke(FunctionName=TEST_LAMBDA_NAME_PY, Payload=b'{}', InvocationType='Event')
+    assert result['StatusCode'] == 202
+
+    # Invocation Type - DryRun
+    result = lambda_client.invoke(FunctionName=TEST_LAMBDA_NAME_PY, Payload=b'{}', InvocationType='DryRun')
+    assert result['StatusCode'] == 204
 
     if use_docker():
         # deploy and invoke lambda - Python 3.6
@@ -92,8 +156,10 @@ def test_lambda_runtimes():
     if not os.path.exists(TEST_LAMBDA_JAVA):
         mkdir(os.path.dirname(TEST_LAMBDA_JAVA))
         download(TEST_LAMBDA_JAR_URL, TEST_LAMBDA_JAVA)
-    zip_file = testutil.create_zip_file(TEST_LAMBDA_JAVA, get_content=True)
-    testutil.create_lambda_function(func_name=TEST_LAMBDA_NAME_JAVA, zip_file=zip_file,
+    # Lambda supports single JAR deployments without the zip, so we upload the JAR directly.
+    test_java_jar = load_file(TEST_LAMBDA_JAVA, mode='rb')
+    assert test_java_jar is not None
+    testutil.create_lambda_function(func_name=TEST_LAMBDA_NAME_JAVA, zip_file=test_java_jar,
         runtime=LAMBDA_RUNTIME_JAVA8, handler='cloud.localstack.sample.LambdaHandler')
     result = lambda_client.invoke(FunctionName=TEST_LAMBDA_NAME_JAVA, Payload=b'{}')
     assert result['StatusCode'] == 200
@@ -103,16 +169,12 @@ def test_lambda_runtimes():
     # test SNSEvent
     result = lambda_client.invoke(FunctionName=TEST_LAMBDA_NAME_JAVA, InvocationType='Event',
                                   Payload=b'{"Records": [{"Sns": {"Message": "{}"}}]}')
-    assert result['StatusCode'] == 200
-    result_data = result['Payload'].read()
-    assert json.loads(to_str(result_data)) == {'async': 'True'}
+    assert result['StatusCode'] == 202
 
     # test DDBEvent
     result = lambda_client.invoke(FunctionName=TEST_LAMBDA_NAME_JAVA, InvocationType='Event',
                                   Payload=b'{"Records": [{"dynamodb": {"Message": "{}"}}]}')
-    assert result['StatusCode'] == 200
-    result_data = result['Payload'].read()
-    assert json.loads(to_str(result_data)) == {'async': 'True'}
+    assert result['StatusCode'] == 202
 
     # test KinesisEvent
     result = lambda_client.invoke(FunctionName=TEST_LAMBDA_NAME_JAVA,
@@ -122,7 +184,7 @@ def test_lambda_runtimes():
     assert 'KinesisEvent' in to_str(result_data)
 
     # deploy and invoke lambda - Java with stream handler
-    testutil.create_lambda_function(func_name=TEST_LAMBDA_NAME_JAVA_STREAM, zip_file=zip_file,
+    testutil.create_lambda_function(func_name=TEST_LAMBDA_NAME_JAVA_STREAM, zip_file=test_java_jar,
         runtime=LAMBDA_RUNTIME_JAVA8, handler='cloud.localstack.sample.LambdaStreamHandler')
     result = lambda_client.invoke(FunctionName=TEST_LAMBDA_NAME_JAVA_STREAM, Payload=b'{}')
     assert result['StatusCode'] == 200
@@ -130,7 +192,7 @@ def test_lambda_runtimes():
     assert to_str(result_data).strip() == '{}'
 
     # deploy and invoke lambda - Java with serializable input object
-    testutil.create_lambda_function(func_name=TEST_LAMBDA_NAME_JAVA_SERIALIZABLE, zip_file=zip_file,
+    testutil.create_lambda_function(func_name=TEST_LAMBDA_NAME_JAVA_SERIALIZABLE, zip_file=test_java_jar,
         runtime=LAMBDA_RUNTIME_JAVA8, handler='cloud.localstack.sample.SerializedInputLambdaHandler')
     result = lambda_client.invoke(FunctionName=TEST_LAMBDA_NAME_JAVA_SERIALIZABLE,
                                   Payload=b'{"bucket": "test_bucket", "key": "test_key"}')
@@ -144,6 +206,19 @@ def test_lambda_runtimes():
         testutil.create_lambda_function(func_name=TEST_LAMBDA_NAME_JS,
             zip_file=zip_file, handler='lambda_integration.handler', runtime=LAMBDA_RUNTIME_NODEJS)
         result = lambda_client.invoke(FunctionName=TEST_LAMBDA_NAME_JS, Payload=b'{}')
+        assert result['StatusCode'] == 200
+        result_data = result['Payload'].read()
+        assert to_str(result_data).strip() == '{}'
+
+        # deploy and invoke - .NET Core 2.0. Its already a zip
+        zip_file = TEST_LAMBDA_DOTNETCORE2
+        zip_file_content = None
+        with open(zip_file, 'rb') as file_obj:
+            zip_file_content = file_obj.read()
+        testutil.create_lambda_function(func_name=TEST_LAMBDA_NAME_DOTNETCORE2, zip_file=zip_file_content,
+            handler='DotNetCore2::DotNetCore2.Lambda.Function::SimpleFunctionHandler',
+            runtime=LAMBDA_RUNTIME_DOTNETCORE2)
+        result = lambda_client.invoke(FunctionName=TEST_LAMBDA_NAME_DOTNETCORE2, Payload=b'{}')
         assert result['StatusCode'] == 200
         result_data = result['Payload'].read()
         assert to_str(result_data).strip() == '{}'

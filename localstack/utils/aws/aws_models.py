@@ -181,11 +181,13 @@ class LambdaFunction(Component):
         return self.id
 
     def function(self, qualifier=None):
+        return self.versions.get(self.get_qualifier_version(qualifier)).get('Function')
+
+    def get_qualifier_version(self, qualifier=None):
         if not qualifier:
             qualifier = '$LATEST'
-        version = qualifier if qualifier in self.versions else \
+        return qualifier if qualifier in self.versions else \
             self.aliases.get(qualifier).get('FunctionVersion')
-        return self.versions.get(version).get('Function')
 
     def qualifier_exists(self, qualifier):
         return qualifier in self.aliases or qualifier in self.versions
@@ -287,6 +289,8 @@ class EventSource(Component):
                 inst.table = table
             else:
                 inst = DynamoDB(obj)
+        elif obj.startswith('arn:aws:sqs:'):
+            inst = SqsQueue(obj)
         elif type:
             for o in EventSource.filter_type(pool, type):
                 if o.name() == obj:

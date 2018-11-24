@@ -1,7 +1,7 @@
 import os
 import re
-import boto3
 import json
+import boto3
 import base64
 import logging
 from six import iteritems
@@ -202,6 +202,22 @@ def render_velocity_template(template, context, as_json=False):
     return replaced
 
 
+def check_valid_region(headers):
+    """ Check whether a valid region is provided, and if not then raise an Exception. """
+    auth_header = headers.get('Authorization')
+    if not auth_header:
+        raise Exception('Unable to find "Authorization" header in request')
+    replaced = re.sub(r'.*Credential=([^,]+),.*', r'\1', auth_header)
+    if auth_header == replaced:
+        raise Exception('Unable to find "Credential" section in "Authorization" header')
+    # Format is: <your-access-key-id>/<date>/<aws-region>/<aws-service>/aws4_request
+    # See https://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-auth-using-authorization-header.html
+    parts = replaced.split('/')
+    region = parts[2]
+    if region not in config.VALID_REGIONS:
+        raise Exception('Invalid region specified in "Authorization" header: "%s"' % region)
+
+
 def get_s3_client():
     return boto3.resource('s3',
         endpoint_url=config.TEST_S3_URL,
@@ -279,7 +295,8 @@ def s3_bucket_arn(bucket_name, account_id=None):
 
 def sqs_queue_arn(queue_name, account_id=None):
     account_id = get_account_id(account_id)
-    return ('arn:aws:sqs:%s:%s:%s' % (get_local_region(), account_id, queue_name))
+    # ElasticMQ sets a static region of "elasticmq"
+    return ('arn:aws:sqs:elasticmq:%s:%s' % (account_id, queue_name))
 
 
 def sns_topic_arn(topic_name, account_id=None):
@@ -449,6 +466,10 @@ def create_api_gateway_integrations(api_id, resource_id, method, integrations=[]
                 httpMethod=method['httpMethod'],
                 statusCode=response_config['code']
             )
+
+
+def apigateway_invocations_arn(lambda_uri):
+    return 'arn:aws:apigateway:%s:lambda:path/2015-03-31/functions/%s/invocations' % (DEFAULT_REGION, lambda_uri)
 
 
 def get_elasticsearch_endpoint(domain=None, region_name=None):

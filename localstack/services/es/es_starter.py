@@ -19,7 +19,7 @@ def delete_all_elasticsearch_data():
     run('rm -rf "%s"' % data_dir)
 
 
-def start_elasticsearch(port=PORT_ELASTICSEARCH, delete_data=True, async=False, update_listener=None):
+def start_elasticsearch(port=PORT_ELASTICSEARCH, delete_data=True, asynchronous=False, update_listener=None):
     # delete Elasticsearch data that may be cached locally from a previous test run
     delete_all_elasticsearch_data()
 
@@ -31,7 +31,7 @@ def start_elasticsearch(port=PORT_ELASTICSEARCH, delete_data=True, async=False, 
         es_data_dir = '%s/elasticsearch' % DATA_DIR
     # Elasticsearch 5.x cannot be bound to 0.0.0.0 in some Docker environments,
     # hence we use the default bind address 127.0.0.0 and put a proxy in front of it
-    cmd = (('ES_JAVA_OPTS=\"$ES_JAVA_OPTS -Xms200m -Xmx500m\" ES_TMPDIR="%s" ' +
+    cmd = (('ES_JAVA_OPTS=\"${ES_JAVA_OPTS:--Xms200m -Xmx500m}\" ES_TMPDIR="%s" ' +
         '%s/infra/elasticsearch/bin/elasticsearch ' +
         '-E http.port=%s -E http.publish_port=%s -E http.compression=false -E path.data=%s') %
         (es_tmp_dir, ROOT_PATH, backend_port, backend_port, es_data_dir))
@@ -47,7 +47,7 @@ def start_elasticsearch(port=PORT_ELASTICSEARCH, delete_data=True, async=False, 
         update_listener, quiet=True, params={'protocol_version': 'HTTP/1.0'})
     if is_root():
         cmd = "su -c '%s' localstack" % cmd
-    thread = do_run(cmd, async)
+    thread = do_run(cmd, asynchronous)
     return thread
 
 

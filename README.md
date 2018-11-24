@@ -42,6 +42,7 @@ any longer.
 * **CloudFormation** at http://localhost:4581
 * **CloudWatch** at http://localhost:4582
 * **SSM** at http://localhost:4583
+* **SecretsManager** at http://localhost:4584
 
 
 Additionally, *LocalStack* provides a powerful set of tools to interact with the cloud services, including
@@ -59,12 +60,6 @@ missing functionality on top of them:
 * **Error injection:** *LocalStack* allows to inject errors frequently occurring in real Cloud environments,
   for instance `ProvisionedThroughputExceededException` which is thrown by Kinesis or DynamoDB if the amount of
   read/write throughput is exceeded.
-* **Actual HTTP REST services**: All services in *LocalStack* allow actual HTTP connections on a TCP port. In contrast,
-  moto uses boto client proxies that are injected into all methods annotated with `@mock_sqs`. These client proxies
-  do not perform an actual REST call, but rather call a local mock service method that lives in the same process as
-  the test code.
-* **Language agnostic**: Although *LocalStack* is written in Python, it works well with arbitrary programming
-  languages and environments, due to the fact that we are using the actual REST APIs via HTTP.
 * **Isolated processes**: All services in *LocalStack* run in separate processes. The overhead of additional
   processes is negligible, and the entire stack can easily be executed on any developer machine and CI server.
   In moto, components are often hard-wired in RAM (e.g., when forwarding a message on an SNS topic to an SQS queue,
@@ -114,7 +109,7 @@ localstack start --docker
 (Note that on MacOS you may have to run `TMPDIR=/private$TMPDIR localstack start --docker` if
 `$TMPDIR` contains a symbolic link that cannot be mounted by Docker.)
 
-Or using docker-compose (you need to clone the repository first):
+Or using docker-compose (you need to clone the repository first, currently supports docker-compose version 2):
 
 ```
 docker-compose up
@@ -230,7 +225,7 @@ See the example test file `tests/test_integration.py` for more details.
 
 ## Integration with Java/JUnit
 
-In order to use *LocalStack* with Java, the project ships with a simple JUnit runner. Take a look
+In order to use *LocalStack* with Java, the project ships with a simple JUnit runner and a JUnit 5 extension. Take a look
 at the example JUnit test in `ext/java`. When you run the test, all dependencies are automatically
 downloaded and installed to a temporary directory in your system.
 
@@ -252,6 +247,15 @@ public class MyCloudAppTest {
 }
 ```
 
+Or with JUnit 5 :
+
+```
+@ExtendWith(LocalstackExtension.class)
+public class MyCloudAppTest {
+   ...
+}
+```
+
 Additionally, there is a version of the *LocalStack* Test Runner which runs in a docker container
 instead of installing *LocalStack* on the current machine. The only dependency is to have docker
 installed locally. The test runner will automatically pull the image and start the container for the
@@ -270,6 +274,16 @@ public class MyDockerCloudAppTest {
     ...
 ```
 
+Or with JUnit 5 :
+
+```
+@ExtendWith(LocalstackDockerExtension.class)
+@LocalstackDockerProperties(randomizePorts = true, services = { "sqs", "kinesis:77077" })
+public class MyDockerCloudAppTest {
+   ...
+}
+```
+
 The *LocalStack* JUnit test runner is published as an artifact in Maven Central.
 Simply add the following dependency to your `pom.xml` file:
 
@@ -277,7 +291,7 @@ Simply add the following dependency to your `pom.xml` file:
 <dependency>
     <groupId>cloud.localstack</groupId>
     <artifactId>localstack-utils</artifactId>
-    <version>0.1.13</version>
+    <version>0.1.15</version>
 </dependency>
 ```
 
@@ -306,6 +320,12 @@ with the `--user` flag: `pip install --user localstack`
 
 * The environment variable `no_proxy` is rewritten by *LocalStack*.
 (Internal requests will go straight via localhost, bypassing any proxy configuration).
+
+* For troubleshooting localstack start issues, you can check debug logs by running `DEBUG=1 localstack start`
+
+* In case you get errors related to node/nodejs, you may find (this issue comment: https://github.com/localstack/localstack/issues/227#issuecomment-319938530) helpful.
+
+* If you are using AWS Java libraries and need to disable SSL certificate checking, add `-Dcom.amazonaws.sdk.disableCertChecking` to the java invocation.
 
 ## Developing
 
@@ -352,6 +372,7 @@ localstack web
 
 ## Change Log
 
+* v0.8.7: Support .Net Core 2.0 and nodejs8.10 Lambdas; refactor Java libs and integrate with JUnit 5; support tags for ES domains; add CloudFormation support for SNS topics; fix kinesis error injection; fix override of `ES_JAVA_OPTS`; fix SQS CORS preflight response; fix S3 content md5 checks and Host header; fix ES startup issue; Bump elasticmq to 0.13.10; bump kinesalite version
 * v0.8.6: Fixes for Windows installation; bump ES to 6.2.0; support filter policy for SNS; upgrade kinesalite; refactor JUnit runner; support Lambda PutFunctionConcurrency and GetEventSourceMapping; fixes for Terraform; add golang support to Lambda; fix file permission issue in Java Lambda tests; fix S3 bucket notification config
 * v0.8.5: Fix DDB streams event type; implement CF Fn::GetAZs; async lambda for DDB events; fix S3 content-type; fix CF deployer for SQS; fix S3 ExposePorts; fix message subject in SNS; support for Firehose -> ES; pass external env vars to containers from Java; add mock for list-queue-tags; enhance docker test runner; fix Windows installation issues; new version of Java libs
 * v0.8.4: Fix `pipenv` dependency issue; Docker JUnit test runner; POJO type for Java Lambda RequestHandler; Java Lambda DynamoDB event; reuse Docker containers for Lambda invocations; API Gateway wildcard path segments; fix SNS RawMessageDelivery
@@ -428,7 +449,7 @@ the [**Contributor License Agreement**](doc/contributor_license_agreement).
 ## Contributors
 
 This project exists thanks to all the people who contribute.
-<a href="graphs/contributors"><img src="https://opencollective.com/localstack/contributors.svg?width=890" /></a>
+<a href="https://github.com/localstack/localstack/graphs/contributors"><img src="https://opencollective.com/localstack/contributors.svg?width=890" /></a>
 
 
 ## Backers

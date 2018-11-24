@@ -12,8 +12,7 @@ usage:             ## Show this help
 install:           ## Install dependencies in virtualenv
 	(test `which virtualenv` || $(PIP_CMD) install --user virtualenv) && \
 		(test -e $(VENV_DIR) || virtualenv $(VENV_OPTS) $(VENV_DIR)) && \
-		($(VENV_RUN) && $(PIP_CMD) -q install --upgrade pip) && \
-		(test ! -e requirements.txt || ($(VENV_RUN); $(PIP_CMD) install -q six==1.10.0 ; $(PIP_CMD) -q install -r requirements.txt) && \
+		(test ! -e requirements.txt || ($(VENV_RUN); $(PIP_CMD) -q install -r requirements.txt) && \
 		$(VENV_RUN); PYTHONPATH=. exec python localstack/services/install.py testlibs)
 
 install-web:       ## Install npm dependencies for dashboard Web UI
@@ -46,10 +45,8 @@ docker-build:      ## Build Docker image
 		docker tag $$LAST_BUT_ONE_LAYER $(IMAGE_NAME):$(IMAGE_TAG)
 
 docker-build-base:
-	docker build -t $(IMAGE_NAME_BASE) -f bin/Dockerfile.base .
+	docker build --squash -t $(IMAGE_NAME_BASE) -f bin/Dockerfile.base .
 	docker tag $(IMAGE_NAME_BASE) $(IMAGE_NAME_BASE):$(IMAGE_TAG)
-	which docker-squash || $(PIP_CMD) install docker-squash
-	docker-squash -t $(IMAGE_NAME_BASE):$(IMAGE_TAG) $(IMAGE_NAME_BASE):$(IMAGE_TAG)
 	docker tag $(IMAGE_NAME_BASE):$(IMAGE_TAG) $(IMAGE_NAME_BASE):latest
 
 docker-push:       ## Push Docker image to registry
@@ -111,14 +108,14 @@ test-docker-mount:
 
 reinstall-p2:      ## Re-initialize the virtualenv with Python 2.x
 	rm -rf $(VENV_DIR)
-	PIP_CMD=pip2 VENV_OPTS="-p `which python2`" make install
+	PIP_CMD=pip2 VENV_OPTS="-p '`which python2`'" make install
 
 reinstall-p3:      ## Re-initialize the virtualenv with Python 3.x
 	rm -rf $(VENV_DIR)
-	PIP_CMD=pip3 VENV_OPTS="-p `which python3`" make install
+	PIP_CMD=pip3 VENV_OPTS="-p '`which python3`'" make install
 
 lint:              ## Run code linter to check code style
-	($(VENV_RUN); flake8 --inline-quotes=single --show-source --max-line-length=120 --ignore=E128 --exclude=node_modules,$(VENV_DIR)*,dist .)
+	($(VENV_RUN); flake8 --inline-quotes=single --show-source --max-line-length=120 --ignore=E128,W504 --exclude=node_modules,$(VENV_DIR)*,dist .)
 
 clean:             ## Clean up (npm dependencies, downloaded infrastructure code, compiled Java classes)
 	rm -rf localstack/dashboard/web/node_modules/

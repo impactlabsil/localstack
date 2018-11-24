@@ -3,6 +3,7 @@ import logging
 import json
 import requests
 import dateutil.parser
+from six.moves.urllib import parse as urlparse
 from requests.models import Response
 from flask import Response as FlaskResponse
 from localstack.constants import APPLICATION_JSON, PATH_USER_REQUEST
@@ -121,11 +122,26 @@ def extract_path_params(path, extracted_path):
     return path_params
 
 
+def extract_query_string_params(path):
+    parsed_path = urlparse.urlparse(path)
+    path = parsed_path.path
+    parsed_query_string_params = urlparse.parse_qs(parsed_path.query)
+
+    query_string_params = {}
+    for query_param_name, query_param_values in parsed_query_string_params.items():
+        if len(query_param_values) == 1:
+            query_string_params[query_param_name] = query_param_values[0]
+        else:
+            query_string_params[query_param_name] = query_param_values
+
+    return [path, query_string_params]
+
+
 def get_resource_for_path(path, path_map):
     matches = []
     for api_path, details in path_map.items():
-        api_path_regex = re.sub(r'\{[^\+]+\+\}', '[^\?#]+', api_path)
-        api_path_regex = re.sub(r'\{[^\}]+\}', '[^/]+', api_path_regex)
+        api_path_regex = re.sub(r'\{[^\+]+\+\}', r'[^\?#]+', api_path)
+        api_path_regex = re.sub(r'\{[^\}]+\}', r'[^/]+', api_path_regex)
         if re.match(r'^%s$' % api_path_regex, path):
             matches.append((api_path, details))
     if not matches:
@@ -168,23 +184,29 @@ class ProxyListenerApiGateway(ProxyListener):
                 integration = aws_stack.get_apigateway_integration(api_id, method, path=relative_path)
                 assert integration
             except Exception:
-                # if we have no exact match, try to find an API resource that contains path parameters
-                path_map = get_rest_api_paths(rest_api_id=api_id)
                 try:
-                    extracted_path, resource = get_resource_for_path(path=relative_path, path_map=path_map)
+                    integration = aws_stack.get_apigateway_integration(api_id, 'ANY', path=relative_path)
+                    assert integration
                 except Exception:
-                    return make_error('Unable to find path %s' % path, 404)
+                    # if we have no exact match, try to find an API resource that contains path parameters
+                    path_map = get_rest_api_paths(rest_api_id=api_id)
+                    try:
+                        extracted_path, resource = get_resource_for_path(path=relative_path, path_map=path_map)
+                    except Exception:
+                        return make_error('Unable to find path %s' % path, 404)
 
-                integrations = resource.get('resourceMethods', {})
-                integration = integrations.get(method, {})
-                integration = integration.get('methodIntegration')
-                if not integration:
+                    integrations = resource.get('resourceMethods', {})
+                    integration = integrations.get(method, {})
+                    if not integration:
+                        integration = integrations.get('ANY', {})
+                    integration = integration.get('methodIntegration')
+                    if not integration:
 
-                    if method == 'OPTIONS' and 'Origin' in headers:
-                        # default to returning CORS headers if this is an OPTIONS request
-                        return get_cors_response(headers)
+                        if method == 'OPTIONS' and 'Origin' in headers:
+                            # default to returning CORS headers if this is an OPTIONS request
+                            return get_cors_response(headers)
 
-                    return make_error('Unable to find integration for path %s' % path, 404)
+                        return make_error('Unable to find integration for path %s' % path, 404)
 
             uri = integration.get('uri')
             if method == 'POST' and integration['type'] == 'AWS':
@@ -208,12 +230,16 @@ class ProxyListenerApiGateway(ProxyListener):
                     func_arn = uri.split(':lambda:path')[1].split('functions/')[1].split('/invocations')[0]
                     data_str = json.dumps(data) if isinstance(data, dict) else data
 
+                    relative_path, query_string_params = extract_query_string_params(path=relative_path)
+
                     try:
                         path_params = extract_path_params(path=relative_path, extracted_path=extracted_path)
                     except Exception:
                         path_params = {}
+
                     result = lambda_api.process_apigateway_invocation(func_arn, relative_path, data_str,
-                        headers, path_params=path_params, method=method, resource_path=path)
+                        headers, path_params=path_params, query_string_params=query_string_params,
+                        method=method, resource_path=path)
 
                     if isinstance(result, FlaskResponse):
                         return flask_to_requests_response(result)
